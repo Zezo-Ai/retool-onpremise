@@ -1,0 +1,3 @@
+profile /usr/bin/nsjail flags=(unconfined) {
+   userns,
+}
