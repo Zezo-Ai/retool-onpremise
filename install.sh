@@ -44,7 +44,7 @@ if [ -f /etc/os-release ]; then
     . /etc/os-release
     if [ "${ID}" = "ubuntu" ] && command -v dpkg &> /dev/null; then
         if dpkg --compare-versions "${VERSION_ID}" ge "24.04"; then
-            echo "  ⚠️ Ubuntu ${VERSION_ID} detected. Setting up AppArmor profile for nsjail..."
+            echo "  Ubuntu ${VERSION_ID} detected. Setting up AppArmor profile for nsjail..."
             if ! dpkg -s apparmor-profiles &> /dev/null; then
                 sudo apt-get update -y > /dev/null 2>&1 || true
                 sudo apt-get install -y apparmor-profiles > /dev/null 2>&1 || true
