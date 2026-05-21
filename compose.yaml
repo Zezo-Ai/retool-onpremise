@@ -15,8 +15,10 @@ services:
       - frontend
       - backend
       - code-executor
+      - js-executor
     depends_on:
       - postgres
+      - minio
     restart: always
 
   jobs-runner:
@@ -40,6 +42,7 @@ services:
     networks:
       - backend
       - code-executor
+      - js-executor
     depends_on:
       - postgres
     restart: always
@@ -54,6 +57,7 @@ services:
     networks:
       - backend
       - code-executor
+      - js-executor
     depends_on:
       - postgres
     restart: always
@@ -68,6 +72,7 @@ services:
     networks:
       - backend
       - code-executor
+      - js-executor
     depends_on:
       - postgres
     restart: always
@@ -82,6 +87,7 @@ services:
     networks:
       - backend
       - code-executor
+      - js-executor
     depends_on:
       - postgres
     restart: always
@@ -102,6 +108,141 @@ services:
     networks:
       - code-executor
     restart: always
+
+  js-executor:
+    build:
+      context: .
+      target: js-executor
+
+    # js-executor reads its memory budget from the cgroup limit, so this
+    # must be set explicitly. Matches the helm chart default (2048Mi).
+    mem_limit: 4g
+
+    # Custom seccomp profile is required for nsjail's syscalls to pass Docker's
+    # default seccomp filter. Applies under both options below.
+    security_opt:
+      - seccomp=./nsjail-seccomp.json
+
+    # Option 1 (preferred): Grant NET_ADMIN so the executor can install
+    # iptables egress rules. Requires the host kernel to expose the
+    # netfilter `filter` table.
+    cap_add:
+      - NET_ADMIN
+
+    # Option 2: Skip iptables-based egress filtering. Use this if NET_ADMIN
+    # isn't available or the host kernel lacks netfilter support. nsjail still
+    # wraps user code; only the network-egress filter is skipped. Note: do
+    # not also drop to a non-root user here — the entrypoint uses `runuser`
+    # internally to drop privileges and that requires starting as root.
+    # environment:
+    #   - DISABLE_IPTABLES_SECURITY_CONFIGURATION=true
+
+    networks:
+      - js-executor
+    restart: always
+  
+  agent-sandbox-controller:
+    build:
+      context: .
+      target: agent-sandbox
+    user: root
+    env_file: docker.env
+    environment:
+      - NODE_ENV=production
+      - AGENT_EXECUTOR_ROLE=controller
+      - ORCHESTRATOR=docker
+      - EXECUTOR_IMAGE=${EXECUTOR_IMAGE:-retool-onpremise-agent-sandbox-controller}
+      - DOCKER_NETWORK=agent-sandbox
+      - EXECUTOR_SERVICE_NAME=agent-sandbox
+      - SANDBOX_BACKEND_URL=http://api:3000
+      - EXECUTOR_EXTRA_ENV=SANDBOX_NETWORK_ENABLED=false,SANDBOX_HTTP_PROXY=http://agent-sandbox-proxy:3019
+      - EXECUTOR_SECCOMP_PROFILE_PATH=/seccomp/gvisor-seccomp.json
+      # Lower pool sizes for local development
+      - PREWARM_POOL_SIZE=1
+      - MAX_TOTAL_JOBS=10
+      - MAX_CONCURRENT_CREATES=2
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./gvisor-seccomp.json:/seccomp/gvisor-seccomp.json:ro
+    networks:
+      - backend
+      - agent-sandbox
+    depends_on:
+      - postgres
+    restart: always
+  
+  agent-sandbox-proxy:
+    build:
+      context: .
+      target: agent-sandbox
+    env_file: docker.env
+    environment:
+      - NODE_ENV=production
+      - AGENT_EXECUTOR_ROLE=proxy
+      - ORCHESTRATOR=docker
+      - PROXY_PORT=3019
+      - EXECUTOR_SERVICE_NAME=agent-sandbox
+      - BACKEND_URL=http://api:3000
+      # Uncomment to restrict which external domains sandboxes can reach
+      # - ALLOWED_DOMAINS=api.openai.com,api.anthropic.com
+    ports:
+      - 3019:3019
+    networks:
+      - backend
+      - agent-sandbox
+    depends_on:
+      - postgres
+    restart: always
+  
+  r2-agent-worker:
+    build:
+      context: .
+    env_file: docker.env
+    environment:
+      - SERVICE_TYPE=R2_AGENT_TEMPORAL_WORKER
+      - WORKER_TEMPORAL_TASKQUEUE=r2-agent
+    networks:
+      - backend
+      - code-executor
+      - js-executor
+      - agent-sandbox
+    depends_on:
+      - postgres
+    restart: always
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=retool
+      - MINIO_ROOT_PASSWORD=retoolminio
+      - MINIO_DOMAIN=minio
+    ports:
+      - 9000:9000
+      - 9001:9001
+    networks:
+      backend:
+        aliases:
+          - retool-rr-git.minio
+          - retool-rr-snapshots.minio
+    volumes:
+      - minio-data:/data
+    restart: always
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 3;
+      mc alias set local http://minio:9000 retool retoolminio;
+      mc mb --ignore-existing local/retool-rr-git;
+      mc mb --ignore-existing local/retool-rr-snapshots;
+      echo 'Buckets created successfully';
+      "
+    networks:
+      - backend
 
   # Retool's internal DB, we recommend using an externally hosted database: https://docs.retool.com/docs/configuring-retools-storage-database
   postgres:
@@ -146,7 +287,11 @@ networks:
   frontend:
   backend:
   code-executor:
+  js-executor:
+  agent-sandbox:
+    name: agent-sandbox
 
 volumes:
   data:
   retooldb-data:
+  minio-data:
