@@ -49,16 +49,18 @@ Configure
 
 1. Check the generated `.env` files to make sure the license key and randomized keys were set as expected during the installation.
 
-2. Save off the `ENCRYPTION_KEY` value, since this is needed to encrypt/decrypt values saved into the Postgres database the Retool instance runs on. 
+2. Review the blob storage settings in `docker.env`. The generated defaults use bundled MinIO through `RR_BLOB_STORAGE_PROVIDER=s3` and `RR_DEFAULT_S3_*` variables. For production, replace these with your external object store credentials. For AWS S3, remove `RR_DEFAULT_S3_ENDPOINT` and `AWS_ENDPOINT_URL`; for S3-compatible providers such as R2 or MinIO, set both endpoint variables to the provider endpoint. The older `RR_GIT_*`, `RR_SNAPSHOTS_*`, and `RETOOL_ORG_PACKAGES_*` variables are only needed for advanced per-use-case overrides.
 
-3. Replace `X.Y.Z-stable` in `Dockerfile` with the desired Retool version listed in our [Dockerhub repo](https://hub.docker.com/r/tryretool/backend/tags), we recommend the latest patch of the most recent [stable version](https://hub.docker.com/r/tryretool/backend/tags?name=stable).
+3. Save off the `ENCRYPTION_KEY` value, since this is needed to encrypt/decrypt values saved into the Postgres database the Retool instance runs on.
 
-4. To set up HTTPS, you'll need your domain pointing to your server's IP address. If that's in place, make sure `DOMAINS` is correct in `docker.env`, and then set `STAGE=production` in `compose.yaml` for the `https-portal` container to attempt to get and use a free `Let's Encrypt` cert for your domain on startup.
+4. Replace `X.Y.Z-stable` in `Dockerfile` with the desired Retool version listed in our [Dockerhub repo](https://hub.docker.com/r/tryretool/backend/tags), we recommend the latest patch of the most recent [stable version](https://hub.docker.com/r/tryretool/backend/tags?name=stable).
+
+5. To set up HTTPS, you'll need your domain pointing to your server's IP address. If that's in place, make sure `DOMAINS` is correct in `docker.env`, and then set `STAGE=production` in `compose.yaml` for the `https-portal` container to attempt to get and use a free `Let's Encrypt` cert for your domain on startup.
 
 > [!WARNING]  
 > You must set `COOKIE_INSECURE=true` in `docker.env` to allow logging into Retool without HTTPS configured (not recommended)
 
-5. By default, the deployment will include a Temporal container for Workflows. If you have an Enterprise license and would like to instead use Retool's managed Temporal cluster, comment out the `include` block in `compose.yaml` and the `WORKFLOW_TEMPORAL_...` environment variables in `docker.env`. Check out [our docs](https://docs.retool.com/self-hosted/concepts/temporal) for more information on Temporal deployment options.
+6. By default, the deployment will include a Temporal container for Workflows. If you have an Enterprise license and would like to instead use Retool's managed Temporal cluster, comment out the `include` block in `compose.yaml` and the `WORKFLOW_TEMPORAL_...` environment variables in `docker.env`. Check out [our docs](https://docs.retool.com/self-hosted/concepts/temporal) for more information on Temporal deployment options.
 
 <br>
 

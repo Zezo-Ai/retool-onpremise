@@ -223,6 +223,7 @@ services:
     networks:
       backend:
         aliases:
+          - retool-blob-storage.minio
           - retool-rr-git.minio
           - retool-rr-snapshots.minio
     volumes:
@@ -237,6 +238,7 @@ services:
       /bin/sh -c "
       sleep 3;
       mc alias set local http://minio:9000 retool retoolminio;
+      mc mb --ignore-existing local/retool-blob-storage;
       mc mb --ignore-existing local/retool-rr-git;
       mc mb --ignore-existing local/retool-rr-snapshots;
       echo 'Buckets created successfully';

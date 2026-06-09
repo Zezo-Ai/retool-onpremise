@@ -156,17 +156,17 @@ STATE_BACKEND=postgres
 AGENT_EXECUTOR_POSTGRES_URL=postgres://retool_internal_user:$postgres_password@postgres:5432/hammerhead_production
 AGENT_EXECUTOR_POSTGRES_SCHEMA=agent_executor
 
-# S3-compatible storage (MinIO)
+# Blob storage (bundled MinIO defaults)
+# For production, replace these with your external S3-compatible object store.
+# Leave RR_DEFAULT_S3_ENDPOINT and AWS_ENDPOINT_URL unset for AWS S3.
+# Set both to the same endpoint for R2, MinIO, or other custom endpoints.
+RR_BLOB_STORAGE_PROVIDER=s3
+RR_DEFAULT_S3_BUCKET=retool-blob-storage
+RR_DEFAULT_S3_ACCESS_KEY_ID=retool
+RR_DEFAULT_S3_SECRET_ACCESS_KEY=retoolminio
+RR_DEFAULT_S3_REGION=us-east-1
+RR_DEFAULT_S3_ENDPOINT=http://minio:9000
 AWS_ENDPOINT_URL=http://minio:9000
-RR_GIT_S3_BUCKET=retool-rr-git
-RR_GIT_S3_ACCESS_KEY_ID=retool
-RR_GIT_S3_SECRET_ACCESS_KEY=retoolminio
-RR_GIT_S3_REGION=us-east-1
-RR_SNAPSHOTS_S3_BUCKET=retool-rr-snapshots
-RR_SNAPSHOTS_S3_ACCESS_KEY_ID=retool
-RR_SNAPSHOTS_S3_SECRET_ACCESS_KEY=retoolminio
-RR_SNAPSHOTS_S3_REGION=us-east-1
-RR_SNAPSHOTS_S3_ENDPOINT=http://minio:9000
 
 # Comment out below to use Retool-managed Temporal (Enterprise license)
 WORKFLOW_TEMPORAL_CLUSTER_FRONTEND_HOST=temporal
