@@ -276,6 +276,7 @@ services:
   #   environment:
   #     # Change 'local' -> 'production' below once your domain is pointing to this server
   #     STAGE: local
+  #     WEBSOCKET: 'true'
   #     CLIENT_MAX_BODY_SIZE: 40M
   #     KEEPALIVE_TIMEOUT: 605
   #     PROXY_CONNECT_TIMEOUT: 600
