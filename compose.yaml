@@ -8,7 +8,7 @@ services:
       context: .
     env_file: docker.env
     environment:
-      - SERVICE_TYPE=MAIN_BACKEND,DB_CONNECTOR,DB_SSH_CONNECTOR
+      - SERVICE_TYPE=MAIN_BACKEND,DB_CONNECTOR,DB_SSH_CONNECTOR,RR_GIT_SERVER
     ports:
       - 3000:3000
     networks:
@@ -114,9 +114,9 @@ services:
       context: .
       target: js-executor
 
-    # js-executor reads its memory budget from the cgroup limit, so this
-    # must be set explicitly. Matches the helm chart default (2048Mi).
-    mem_limit: 4g
+    # js-executor reads its memory budget from the cgroup limit, so this must
+    # be set explicitly.
+    mem_limit: 2g
 
     # Custom seccomp profile is required for nsjail's syscalls to pass Docker's
     # default seccomp filter. Applies under both options below.
@@ -151,7 +151,6 @@ services:
       - NODE_ENV=production
       - AGENT_EXECUTOR_ROLE=controller
       - ORCHESTRATOR=docker
-      - EXECUTOR_IMAGE=${EXECUTOR_IMAGE:-retool-onpremise-agent-sandbox-controller}
       - DOCKER_NETWORK=agent-sandbox
       - EXECUTOR_SERVICE_NAME=agent-sandbox
       - SANDBOX_BACKEND_URL=http://api:3000
@@ -185,8 +184,6 @@ services:
       - BACKEND_URL=http://api:3000
       # Uncomment to restrict which external domains sandboxes can reach
       # - ALLOWED_DOMAINS=api.openai.com,api.anthropic.com
-    ports:
-      - 3019:3019
     networks:
       - backend
       - agent-sandbox
@@ -225,6 +222,9 @@ services:
         aliases:
           - retool-blob-storage.minio
           - retool-rr-git.minio
+          - retool-rr-snapshots.minio
+      agent-sandbox:
+        aliases:
           - retool-rr-snapshots.minio
     volumes:
       - minio-data:/data
@@ -272,7 +272,11 @@ services:
     env_file: docker.env
     environment:
       # Change 'local' -> 'production' below once your domain is pointing to this server
-      STAGE: local 
+      STAGE: local
+      # Forwards WebSocket upgrades (proxy_http_version 1.1 + Upgrade/Connection headers).
+      # Required for the agent-sandbox preview and multiplayer WebSockets — without it
+      # those connections fail with close code 1006 even though normal HTTP works.
+      WEBSOCKET: 'true'
       CLIENT_MAX_BODY_SIZE: 40M
       KEEPALIVE_TIMEOUT: 605
       PROXY_CONNECT_TIMEOUT: 600
