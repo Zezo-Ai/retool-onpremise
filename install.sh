@@ -105,8 +105,9 @@ echo "Prompting for optional configuration..."
 read -p "  Retool license key: " licenseKey
 licenseKey=${licenseKey:-EXPIRED-LICENSE-KEY-TRIAL}
 
-read -p "  Domain (e.g. retool.company.com) pointing to this server: " hostname
-hostname=${hostname:-$(dig +short myip.opendns.com @resolver1.opendns.com)}
+echo "  Domain pointing to this server (e.g. retool.company.com) for HTTPS access."
+echo "  Leave blank for local HTTP access at http://localhost:3000 (recommended for local testing)."
+read -p "  Domain: " hostname
 echo ""
 
 # Create docker.env with values
@@ -119,6 +120,43 @@ ae_private_pem=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 
 ae_public_pem=$(echo "$ae_private_pem" | openssl ec -pubout 2>/dev/null)
 ae_private_key=$(echo "$ae_private_pem" | awk '{if(NR>1)printf "\\n";printf "%s",$0}')
 ae_public_key=$(echo "$ae_public_pem" | awk '{if(NR>1)printf "\\n";printf "%s",$0}')
+
+# Build the serving-mode config (domain/TLS vs. local HTTP). The agent-sandbox
+# preview connects same-origin as the editor, so BASE_DOMAIN must match the scheme
+# and host the browser actually uses.
+if [[ -n "$hostname" ]]; then
+  serving_mode="https://$hostname (enable the https-portal service in compose.yaml)"
+  network_config=$(cat <<CFG
+# TLS domain(s) terminated by the https-portal container. Uncomment the
+# https-portal service in compose.yaml to enable it.
+DOMAINS=$hostname -> http://api:3000
+
+# Used to create links like user invitations and password resets
+# Retool tries to guess this, but it can be incorrect if using a proxy in front of the instance
+BASE_DOMAIN=https://$hostname
+
+# If your domain/HTTPS isn't in place yet
+# COOKIE_INSECURE=true
+CFG
+)
+else
+  serving_mode="http://localhost:3000 (plain HTTP, https-portal disabled)"
+  network_config=$(cat <<CFG
+# No TLS domain configured: Retool is reached directly at http://localhost:3000.
+# To switch to HTTPS later, set DOMAINS to "your-domain -> http://api:3000",
+# uncomment the https-portal service in compose.yaml, and set BASE_DOMAIN to
+# https://your-domain.
+# DOMAINS=your-domain.com -> http://api:3000
+
+# Used to create links like user invitations and password resets
+# Local HTTP access: reach Retool directly at the api service's published port.
+BASE_DOMAIN=http://localhost:3000
+
+# Required when serving over plain HTTP (no TLS)
+COOKIE_INSECURE=true
+CFG
+)
+fi
 
 cat << EOF > docker.env
 # Environment variables reference: docs.retool.com/docs/environment-variables
@@ -148,7 +186,6 @@ AGENT_EXECUTOR_ENABLED=true
 RR_AGENT_PUBSUB_BACKEND=postgres
 AGENT_EXECUTOR_CONTROLLER_INGRESS_DOMAIN=http://agent-sandbox-controller:3018
 AGENT_EXECUTOR_PROXY_INGRESS_DOMAIN=http://agent-sandbox-proxy:3019
-AGENT_EXECUTOR_FRONTEND_WS_PROXY_DOMAIN=http://$hostname:3019
 AGENT_EXECUTOR_JWT_PRIVATE_KEY="$ae_private_key"
 AGENT_EXECUTOR_JWT_PUBLIC_KEY="$ae_public_key"
 AGENT_EXECUTOR_ENCRYPTION_KEY=$(openssl rand -hex 32)
@@ -181,15 +218,7 @@ JWT_SECRET=$(random 256)
 # License you received from my.retool.com or your Retool contact
 LICENSE_KEY=$licenseKey
 
-# Make sure $hostname is your domain to set up HTTPS (e.g. retool.company.com)
-DOMAINS=$hostname -> http://api:3000
-
-# Used to create links like user invitations and password resets
-# Retool tries to guess this, but it can be incorrect if using a proxy in front of the instance
-BASE_DOMAIN=https://$hostname
-
-# If your domain/HTTPS isn't in place yet
-# COOKIE_INSECURE=true
+$network_config
 
 EOF
 
@@ -202,7 +231,14 @@ echo "✅ Created docker.env"
 # Next steps
 
 echo ""
-echo "Done! Check docker.env and retooldb.env files for expected values, and confirm"
+echo "Done! Retool will be served at: $serving_mode"
+echo ""
+echo "Check docker.env and retooldb.env files for expected values, and confirm"
 echo "the Retool version in Dockerfile. We suggest the most recent X.Y.Z-stable version,"
 echo "see Dockerhub for available tags: https://hub.docker.com/r/tryretool/backend/tags"
+if [[ -n "$hostname" ]]; then
+  echo ""
+  echo "HTTPS mode: uncomment the https-portal service in compose.yaml before starting,"
+  echo "and ensure $hostname resolves to this server with a trusted certificate."
+fi
 echo ""

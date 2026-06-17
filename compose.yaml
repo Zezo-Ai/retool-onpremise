@@ -184,8 +184,6 @@ services:
       - BACKEND_URL=http://api:3000
       # Uncomment to restrict which external domains sandboxes can reach
       # - ALLOWED_DOMAINS=api.openai.com,api.anthropic.com
-    ports:
-      - 3019:3019
     networks:
       - backend
       - agent-sandbox
@@ -268,24 +266,27 @@ services:
       - retooldb-data:/var/lib/postgresql/data
     restart: always
 
-  # Optional Nginx container for handling TLS for your domain (requires setting DOMAINS and STAGE)
-  https-portal:
-    image: tryretool/https-portal:latest
-    env_file: docker.env
-    environment:
-      # Change 'local' -> 'production' below once your domain is pointing to this server
-      STAGE: local 
-      CLIENT_MAX_BODY_SIZE: 40M
-      KEEPALIVE_TIMEOUT: 605
-      PROXY_CONNECT_TIMEOUT: 600
-      PROXY_SEND_TIMEOUT: 600
-      PROXY_READ_TIMEOUT: 600
-    ports:
-      - 80:80
-      - 443:443
-    networks:
-      - frontend
-    restart: always
+  # Optional Nginx container for handling TLS for your domain (requires setting DOMAINS and STAGE).
+  # Disabled for local HTTP access: Retool is reached directly at http://localhost:3000 (api).
+  # Re-enable this (and set DOMAINS + BASE_DOMAIN to https://your-domain, STAGE: production)
+  # once you have a real domain with a trusted certificate.
+  # https-portal:
+  #   image: tryretool/https-portal:latest
+  #   env_file: docker.env
+  #   environment:
+  #     # Change 'local' -> 'production' below once your domain is pointing to this server
+  #     STAGE: local
+  #     CLIENT_MAX_BODY_SIZE: 40M
+  #     KEEPALIVE_TIMEOUT: 605
+  #     PROXY_CONNECT_TIMEOUT: 600
+  #     PROXY_SEND_TIMEOUT: 600
+  #     PROXY_READ_TIMEOUT: 600
+  #   ports:
+  #     - 80:80
+  #     - 443:443
+  #   networks:
+  #     - frontend
+  #   restart: always
 
 networks:
   frontend:
