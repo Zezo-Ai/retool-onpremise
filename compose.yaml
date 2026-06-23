@@ -8,15 +8,19 @@ services:
       context: .
     env_file: docker.env
     environment:
-      - SERVICE_TYPE=MAIN_BACKEND,DB_CONNECTOR,DB_SSH_CONNECTOR
+      - SERVICE_TYPE=MAIN_BACKEND,DB_CONNECTOR,DB_SSH_CONNECTOR,RR_GIT_SERVER
     ports:
       - 3000:3000
     networks:
       - frontend
       - backend
       - code-executor
+      - js-executor
     depends_on:
-      - postgres
+      postgres:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     restart: always
 
   jobs-runner:
@@ -40,8 +44,12 @@ services:
     networks:
       - backend
       - code-executor
+      - js-executor
     depends_on:
-      - postgres
+      postgres:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     restart: always
 
   workflows-worker:
@@ -54,8 +62,12 @@ services:
     networks:
       - backend
       - code-executor
+      - js-executor
     depends_on:
-      - postgres
+      postgres:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     restart: always
 
   agent-worker:
@@ -68,8 +80,12 @@ services:
     networks:
       - backend
       - code-executor
+      - js-executor
     depends_on:
-      - postgres
+      postgres:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     restart: always
 
   agent-eval-worker:
@@ -82,8 +98,12 @@ services:
     networks:
       - backend
       - code-executor
+      - js-executor
     depends_on:
-      - postgres
+      postgres:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
     restart: always
 
   code-executor:
@@ -102,6 +122,143 @@ services:
     networks:
       - code-executor
     restart: always
+
+  js-executor:
+    build:
+      context: .
+      target: js-executor
+
+    # js-executor reads its memory budget from the cgroup limit, so this must
+    # be set explicitly.
+    mem_limit: 2g
+
+    # Custom seccomp profile is required for nsjail's syscalls to pass Docker's
+    # default seccomp filter. Applies under both options below.
+    security_opt:
+      - seccomp=./nsjail-seccomp.json
+
+    # Option 1 (preferred): Grant NET_ADMIN so the executor can install
+    # iptables egress rules. Requires the host kernel to expose the
+    # netfilter `filter` table.
+    cap_add:
+      - NET_ADMIN
+
+    # Option 2: Skip iptables-based egress filtering. Use this if NET_ADMIN
+    # isn't available or the host kernel lacks netfilter support. nsjail still
+    # wraps user code; only the network-egress filter is skipped. Note: do
+    # not also drop to a non-root user here — the entrypoint uses `runuser`
+    # internally to drop privileges and that requires starting as root.
+    # environment:
+    #   - DISABLE_IPTABLES_SECURITY_CONFIGURATION=true
+
+    networks:
+      - js-executor
+    restart: always
+  
+  agent-sandbox-controller:
+    build:
+      context: .
+      target: agent-sandbox
+    user: root
+    env_file: docker.env
+    environment:
+      - NODE_ENV=production
+      - AGENT_EXECUTOR_ROLE=controller
+      - ORCHESTRATOR=docker
+      - DOCKER_NETWORK=agent-sandbox
+      - EXECUTOR_SERVICE_NAME=agent-sandbox
+      - SANDBOX_BACKEND_URL=http://api:3000
+      - EXECUTOR_EXTRA_ENV=SANDBOX_NETWORK_ENABLED=false,SANDBOX_HTTP_PROXY=http://agent-sandbox-proxy:3019
+      - EXECUTOR_SECCOMP_PROFILE_PATH=/seccomp/gvisor-seccomp.json
+      - PREWARM_POOL_SIZE=1
+      - MAX_TOTAL_JOBS=10
+      - MAX_CONCURRENT_CREATES=2
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./gvisor-seccomp.json:/seccomp/gvisor-seccomp.json:ro
+    networks:
+      - backend
+      - agent-sandbox
+    depends_on:
+      - postgres
+    restart: always
+  
+  agent-sandbox-proxy:
+    build:
+      context: .
+      target: agent-sandbox
+    env_file: docker.env
+    environment:
+      - NODE_ENV=production
+      - AGENT_EXECUTOR_ROLE=proxy
+      - ORCHESTRATOR=docker
+      - PROXY_PORT=3019
+      - EXECUTOR_SERVICE_NAME=agent-sandbox
+      - BACKEND_URL=http://api:3000
+      # Uncomment to restrict which external domains sandboxes can reach
+      # - ALLOWED_DOMAINS=api.openai.com,api.anthropic.com
+    networks:
+      - backend
+      - agent-sandbox
+    depends_on:
+      - postgres
+    restart: always
+  
+  r2-agent-worker:
+    build:
+      context: .
+    env_file: docker.env
+    environment:
+      - SERVICE_TYPE=R2_AGENT_TEMPORAL_WORKER
+      - WORKER_TEMPORAL_TASKQUEUE=r2-agent
+    networks:
+      - backend
+      - code-executor
+      - js-executor
+      - agent-sandbox
+    depends_on:
+      postgres:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    restart: always
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    env_file: docker.env
+    environment:
+      - MINIO_DOMAIN=minio
+    ports:
+      - 127.0.0.1:9000:9000
+      - 127.0.0.1:9001:9001
+    networks:
+      backend:
+        aliases:
+          - retool-blob-storage.minio
+      agent-sandbox:
+        aliases:
+          - retool-blob-storage.minio
+    volumes:
+      - minio-data:/data
+    restart: always
+
+  minio-init:
+    image: minio/mc:latest
+    env_file: docker.env
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 \"$$MINIO_ROOT_USER\" \"$$MINIO_ROOT_PASSWORD\"; do
+        echo 'Waiting for MinIO to be ready...';
+        sleep 2;
+      done;
+      mc mb --ignore-existing local/retool-blob-storage;
+      echo 'Bucket created successfully';
+      "
+    networks:
+      - backend
 
   # Retool's internal DB, we recommend using an externally hosted database: https://docs.retool.com/docs/configuring-retools-storage-database
   postgres:
@@ -129,7 +286,11 @@ services:
     env_file: docker.env
     environment:
       # Change 'local' -> 'production' below once your domain is pointing to this server
-      STAGE: local 
+      STAGE: local
+      # Forwards WebSocket upgrades (proxy_http_version 1.1 + Upgrade/Connection headers).
+      # Required for the agent-sandbox preview and multiplayer WebSockets — without it
+      # those connections fail with close code 1006 even though normal HTTP works.
+      WEBSOCKET: 'true'
       CLIENT_MAX_BODY_SIZE: 40M
       KEEPALIVE_TIMEOUT: 605
       PROXY_CONNECT_TIMEOUT: 600
@@ -146,7 +307,11 @@ networks:
   frontend:
   backend:
   code-executor:
+  js-executor:
+  agent-sandbox:
+    name: agent-sandbox
 
 volumes:
   data:
   retooldb-data:
+  minio-data:

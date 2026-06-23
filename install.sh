@@ -61,6 +61,41 @@ if [ -f /etc/os-release ]; then
     fi
 fi
 
+# Install the customized docker-default AppArmor profile + systemd drop-in
+# so it survives docker restarts. The script handles its own preflight
+# (skips silently on hosts without AppArmor); --check tells us whether any
+# persistent changes are needed so we only prompt the user when there's
+# actually work to do.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APPARMOR_SCRIPT="${SCRIPT_DIR}/scripts/setup-docker-apparmor.sh"
+if [ -x "$APPARMOR_SCRIPT" ]; then
+    if "$APPARMOR_SCRIPT" --check; then
+        echo "  ✅ docker-default AppArmor profile already configured (or not applicable on this host)."
+    else
+        echo ""
+        echo "  Agent-sandbox needs the bundled docker-default AppArmor profile installed."
+        echo "  The script will:"
+        echo "    - copy appArmor/docker-default to /etc/apparmor.d/docker-default"
+        echo "    - load it into the kernel via 'apparmor_parser -r'"
+        echo "    - install a systemd drop-in at"
+        echo "      /etc/systemd/system/docker.service.d/retool-apparmor.conf so the"
+        echo "      profile is re-applied on every docker.service start"
+        echo "  Requires sudo. See appArmor/README.md for details."
+        read -p "  Run it now? [Y/n]: " apparmor_confirm
+        case "${apparmor_confirm:-y}" in
+            [yY]|[yY][eE][sS])
+                "$APPARMOR_SCRIPT" || \
+                    echo "  ⚠️ docker-default AppArmor setup failed; agent-sandbox may not work. See appArmor/README.md for manual steps."
+                ;;
+            *)
+                echo "  ⏭️  Skipped docker-default AppArmor setup."
+                echo "  ⚠️ Agent-sandbox will fail with apparmor=\"DENIED\" errors until you run"
+                echo "     '${APPARMOR_SCRIPT}' manually."
+                ;;
+        esac
+    fi
+fi
+
 echo ""
 
 [[ -f docker.env ]] && echo "⚠️ docker.env file already exists, skipping initializing it!" && exit 1
@@ -78,6 +113,16 @@ echo ""
 
 random() { cat /dev/urandom | base64 | head -c "$1" | tr -d +/ ; }
 
+postgres_password=$(random 64)
+
+minio_root_user=retool
+minio_root_password=$(random 32)
+
+ae_private_pem=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev/null)
+ae_public_pem=$(echo "$ae_private_pem" | openssl ec -pubout 2>/dev/null)
+ae_private_key=$(echo "$ae_private_pem" | awk '{if(NR>1)printf "\\n";printf "%s",$0}')
+ae_public_key=$(echo "$ae_public_pem" | awk '{if(NR>1)printf "\\n";printf "%s",$0}')
+
 cat << EOF > docker.env
 # Environment variables reference: docs.retool.com/docs/environment-variables
 DEPLOYMENT_TEMPLATE_TYPE=docker-compose
@@ -87,7 +132,7 @@ POSTGRES_HOST=postgres
 POSTGRES_DB=hammerhead_production
 POSTGRES_PORT=5432
 POSTGRES_USER=retool_internal_user
-POSTGRES_PASSWORD=$(random 64)
+POSTGRES_PASSWORD=$postgres_password
 
 # Retool DB credentials
 RETOOLDB_POSTGRES_HOST=retooldb-postgres
@@ -99,6 +144,36 @@ RETOOLDB_POSTGRES_PASSWORD=$(random 64)
 # Workflows configuration
 WORKFLOW_BACKEND_HOST=http://workflows-backend:3000
 CODE_EXECUTOR_INGRESS_DOMAIN=http://code-executor:3004
+JS_EXECUTOR_INGRESS_DOMAIN=http://js-executor:3000
+
+# Agent sandbox configuration
+AGENT_EXECUTOR_ENABLED=true
+RR_AGENT_PUBSUB_BACKEND=postgres
+AGENT_EXECUTOR_CONTROLLER_INGRESS_DOMAIN=http://agent-sandbox-controller:3018
+AGENT_EXECUTOR_PROXY_INGRESS_DOMAIN=http://agent-sandbox-proxy:3019
+AGENT_EXECUTOR_JWT_PRIVATE_KEY="$ae_private_key"
+AGENT_EXECUTOR_JWT_PUBLIC_KEY="$ae_public_key"
+AGENT_EXECUTOR_ENCRYPTION_KEY=$(openssl rand -hex 32)
+STATE_BACKEND=postgres
+AGENT_EXECUTOR_POSTGRES_URL=postgres://retool_internal_user:$postgres_password@postgres:5432/hammerhead_production
+AGENT_EXECUTOR_POSTGRES_SCHEMA=agent_executor
+
+# Blob storage (bundled MinIO defaults)
+# For production, replace these with your external S3-compatible object store.
+# Leave RR_DEFAULT_S3_ENDPOINT and AWS_ENDPOINT_URL unset for AWS S3.
+# Set both to the same endpoint for R2, MinIO, or other custom endpoints.
+RR_BLOB_STORAGE_PROVIDER=s3
+RR_DEFAULT_S3_BUCKET=retool-blob-storage
+RR_DEFAULT_S3_ACCESS_KEY_ID=$minio_root_user
+RR_DEFAULT_S3_SECRET_ACCESS_KEY=$minio_root_password
+RR_DEFAULT_S3_REGION=us-east-1
+RR_DEFAULT_S3_ENDPOINT=http://minio:9000
+AWS_ENDPOINT_URL=http://minio:9000
+
+# Bundled MinIO root credentials. The minio and minio-init services read these
+# from docker.env; they must match the RR_DEFAULT_S3_* access key/secret above.
+MINIO_ROOT_USER=$minio_root_user
+MINIO_ROOT_PASSWORD=$minio_root_password
 
 # Comment out below to use Retool-managed Temporal (Enterprise license)
 WORKFLOW_TEMPORAL_CLUSTER_FRONTEND_HOST=temporal
