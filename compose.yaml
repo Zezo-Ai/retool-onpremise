@@ -321,11 +321,14 @@ services:
       PROXY_CONNECT_TIMEOUT: 600
       PROXY_SEND_TIMEOUT: 600
       PROXY_READ_TIMEOUT: 600
-      # Route the MCP protocol and its protected-resource metadata to the mcp
-      # service. Longest-prefix match wins, so these override the "/" proxy to
-      # api. OAuth metadata and /api/oauth2/introspect stay on api. $$ escapes
-      # Compose interpolation so nginx receives literal $variables. Remove this
-      # block (and the mcp service) to disable MCP.
+      # MCP routing. The api service listens on two ports: the frontend static
+      # server on 3000 (the default "/" upstream) and the backend API on 3001.
+      # The frontend server only proxies a fixed set of prefixes to the backend
+      # and serves index.html for everything else, so MCP paths must be routed
+      # explicitly here or they come back as HTML. Longest-prefix match wins, so
+      # these override the "/" proxy. $$ escapes Compose interpolation so nginx
+      # receives literal $variables. Remove this block (and the mcp service) to
+      # disable MCP.
       CUSTOM_NGINX_SERVER_CONFIG_BLOCK: |
         location /mcp {
           proxy_pass http://mcp:4010;
@@ -340,6 +343,13 @@ services:
         }
         location /.well-known/oauth-protected-resource {
           proxy_pass http://mcp:4010;
+          proxy_set_header Host $$host;
+          proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+        # Straight to the backend API port (3001), bypassing the frontend
+        # server's SPA fallback, which would otherwise return index.html.
+        location = /.well-known/oauth-authorization-server {
+          proxy_pass http://api:3001;
           proxy_set_header Host $$host;
           proxy_set_header X-Forwarded-Proto $$scheme;
         }
