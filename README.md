@@ -62,6 +62,8 @@ Configure
 
 6. By default, the deployment will include a Temporal container for Workflows. If you have an Enterprise license and would like to instead use Retool's managed Temporal cluster, comment out the `include` block in `compose.yaml` and the `WORKFLOW_TEMPORAL_...` environment variables in `docker.env`. Check out [our docs](https://docs.retool.com/self-hosted/concepts/temporal) for more information on Temporal deployment options.
 
+7. The deployment includes an `mcp` container that serves Retool's [MCP server](https://docs.retool.com/org-users/guides/mcp) at `/mcp`, letting external MCP clients connect to your instance. It needs HTTPS and the `OAUTH_MAIN_DOMAIN`, `MCP_SERVICE_EXTERNAL_URL`, and `OAUTH_INTROSPECTION_AUTH_TOKEN` variables in `docker.env` (all set by `install.sh`). The `https-portal` container routes `/mcp` to it via `CUSTOM_NGINX_SERVER_CONFIG_BLOCK`; the OAuth metadata and introspection endpoints it depends on are served by the `api` service. To disable MCP, remove the `mcp` service and that nginx block from `compose.yaml`. Point your MCP client at `https://<your-domain>/mcp`.
+
 <br>
 
 Run
@@ -93,6 +95,9 @@ Upgrade
 ------
 
 Set the new version in `Dockerfile`, and either run `./upgrade.sh` or follow the below steps:
+
+> [!NOTE]
+> The `mcp` service reads `OAUTH_MAIN_DOMAIN`, `MCP_SERVICE_EXTERNAL_URL`, and `OAUTH_INTROSPECTION_AUTH_TOKEN` from `docker.env`. `install.sh` only writes these on a fresh install, so if you are upgrading an existing deployment add them yourself (see step 7 under [Configure](#configure)). Without them the `mcp` container still starts but MCP clients fail to authenticate.
 
 1. Download and build the new images
 

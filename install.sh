@@ -118,6 +118,8 @@ postgres_password=$(random 64)
 minio_root_user=retool
 minio_root_password=$(random 32)
 
+oauth_introspection_token=$(random 64)
+
 ae_private_pem=$(openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 2>/dev/null)
 ae_public_pem=$(echo "$ae_private_pem" | openssl ec -pubout 2>/dev/null)
 ae_private_key=$(echo "$ae_private_pem" | awk '{if(NR>1)printf "\\n";printf "%s",$0}')
@@ -194,6 +196,15 @@ DOMAINS=$hostname -> http://api:3000
 # Used to create links like user invitations and password resets
 # Retool tries to guess this, but it can be incorrect if using a proxy in front of the instance
 BASE_DOMAIN=https://$hostname
+
+# Retool MCP server (the "mcp" service). Requires HTTPS to work end to end.
+# Public host serving OAuth metadata and /api/oauth2/* (your Retool domain, no scheme)
+OAUTH_MAIN_DOMAIN=$hostname
+# Public base URL the MCP server is reachable on, used for import upload URLs
+MCP_SERVICE_EXTERNAL_URL=https://$hostname
+# Shared secret the MCP server presents to the backend's /api/oauth2/introspect.
+# Read by both the api and mcp services, so it must match on both.
+OAUTH_INTROSPECTION_AUTH_TOKEN=$oauth_introspection_token
 
 # If your domain/HTTPS isn't in place yet
 # COOKIE_INSECURE=true

@@ -223,6 +223,31 @@ services:
         condition: service_completed_successfully
     restart: always
 
+  # Retool MCP server. Lets external MCP clients drive Retool over the Model
+  # Context Protocol. Reached at /mcp via the https-portal reverse proxy (see the
+  # CUSTOM_NGINX_SERVER_CONFIG_BLOCK below); its OAuth metadata and introspection
+  # endpoints are served by the api service. Needs OAUTH_MAIN_DOMAIN and
+  # OAUTH_INTROSPECTION_AUTH_TOKEN in docker.env, which install.sh sets up.
+  mcp:
+    build:
+      context: .
+    env_file: docker.env
+    environment:
+      - SERVICE_TYPE=MCP_SERVER
+      - MCP_PORT=4010
+      - RETOOL_BACKEND_URL=http://api:3000
+    networks:
+      # frontend so the https-portal reverse proxy can reach it at mcp:4010.
+      - frontend
+      - backend
+      - agent-sandbox
+    depends_on:
+      postgres:
+        condition: service_started
+      minio-init:
+        condition: service_completed_successfully
+    restart: always
+
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -282,7 +307,7 @@ services:
 
   # Optional Nginx container for handling TLS for your domain (requires setting DOMAINS and STAGE)
   https-portal:
-    image: tryretool/https-portal:latest
+    image: steveltn/https-portal:1.25.5
     env_file: docker.env
     environment:
       # Change 'local' -> 'production' below once your domain is pointing to this server
@@ -296,6 +321,38 @@ services:
       PROXY_CONNECT_TIMEOUT: 600
       PROXY_SEND_TIMEOUT: 600
       PROXY_READ_TIMEOUT: 600
+      # MCP routing. The api service listens on two ports: the frontend static
+      # server on 3000 (the default "/" upstream) and the backend API on 3001.
+      # The frontend server only proxies a fixed set of prefixes to the backend
+      # and serves index.html for everything else, so MCP paths must be routed
+      # explicitly here or they come back as HTML. Longest-prefix match wins, so
+      # these override the "/" proxy. $$ escapes Compose interpolation so nginx
+      # receives literal $variables. Remove this block (and the mcp service) to
+      # disable MCP.
+      CUSTOM_NGINX_SERVER_CONFIG_BLOCK: |
+        location /mcp {
+          proxy_pass http://mcp:4010;
+          proxy_http_version 1.1;
+          proxy_set_header Connection "";
+          proxy_set_header Host $$host;
+          proxy_set_header X-Real-IP $$remote_addr;
+          proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $$scheme;
+          proxy_buffering off;
+          proxy_read_timeout 600s;
+        }
+        location /.well-known/oauth-protected-resource {
+          proxy_pass http://mcp:4010;
+          proxy_set_header Host $$host;
+          proxy_set_header X-Forwarded-Proto $$scheme;
+        }
+        # Straight to the backend API port (3001), bypassing the frontend
+        # server's SPA fallback, which would otherwise return index.html.
+        location = /.well-known/oauth-authorization-server {
+          proxy_pass http://api:3001;
+          proxy_set_header Host $$host;
+          proxy_set_header X-Forwarded-Proto $$scheme;
+        }
     ports:
       - 80:80
       - 443:443
